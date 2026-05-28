@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Edit",
+      "Write",
+      "Bash",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": []
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "AGENT_TYPE=claude ./.redqueen/hooks/validate-tool.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

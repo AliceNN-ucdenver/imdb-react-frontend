@@ -1,0 +1,72 @@
+{
+  "barId": "APP-IMDB-001",
+  "barName": "IMDB Lite Application",
+  "tier": "autonomous",
+  "compositeScore": 89,
+  "rules": {
+    "toolRestrictions": {
+      "restricted": {
+        "deny": [
+          "Bash",
+          "Write"
+        ],
+        "requireApproval": [
+          "Edit"
+        ]
+      },
+      "supervised": {
+        "deny": [],
+        "requireApproval": [
+          "Bash"
+        ]
+      },
+      "autonomous": {
+        "deny": [],
+        "requireApproval": []
+      }
+    },
+    "securityCriticalPaths": [
+      "src/auth/**",
+      "src/crypto/**",
+      "src/security/**",
+      "config/security*",
+      ".env*",
+      "**/*secret*",
+      "**/*credential*"
+    ],
+    "readOnlyPaths": [
+      ".mcp.json",
+      ".claude/**",
+      "AGENTS.md",
+      ".redqueen/**",
+      ".github/hooks/**"
+    ],
+    "allowedConnections": [
+      {
+        "source": "imdb-lite",
+        "target": "image-cdn",
+        "relationshipId": "app-to-cdn"
+      },
+      {
+        "source": "imdb-lite",
+        "target": "email-service",
+        "relationshipId": "app-to-email"
+      },
+      {
+        "source": "react-frontend",
+        "target": "movie-api",
+        "relationshipId": "frontend-to-api"
+      },
+      {
+        "source": "movie-api",
+        "target": "mongodb",
+        "relationshipId": "api-to-mongo"
+      }
+    ],
+    "customRules": []
+  },
+  "auditLog": {
+    "enabled": true,
+    "path": ".redqueen/audit-log.jsonl"
+  }
+}

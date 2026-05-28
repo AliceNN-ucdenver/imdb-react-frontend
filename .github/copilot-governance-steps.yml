@@ -1,0 +1,15 @@
+# Red Queen governance setup steps for Copilot coding agent
+# Add these steps to your .github/copilot-setup-steps.yml
+
+steps:
+  - name: Checkout governance mesh
+    uses: actions/checkout@v4
+    with:
+      repository: AliceNN-ucdenver/alicenn-ucdenver-governance-mesh
+      path: governance-mesh
+      token: ${{ secrets.COPILOT_MCP_MESH_TOKEN }}
+
+  - name: Start Red Queen MCP Server
+    run: |
+      node .redqueen/mcp-runner.js &
+      sleep 2

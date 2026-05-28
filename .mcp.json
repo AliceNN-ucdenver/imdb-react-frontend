@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "redqueen": {
+      "command": "node",
+      "args": [
+        ".redqueen/mcp-runner.js"
+      ]
+    }
+  }
+}

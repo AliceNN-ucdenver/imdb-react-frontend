@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "hooks": {
+    "preToolUse": [
+      {
+        "type": "command",
+        "matcher": "bash|create|edit",
+        "bash": "AGENT_TYPE=copilot ./.redqueen/hooks/validate-tool.sh",
+        "command": "AGENT_TYPE=copilot ./.redqueen/hooks/validate-tool.sh",
+        "env": {
+          "AGENT_TYPE": "copilot"
+        },
+        "timeoutSec": 30
+      }
+    ]
+  }
+}

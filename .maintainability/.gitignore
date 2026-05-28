@@ -1,0 +1,4 @@
+# D-PR7 — implementation-agent emission territory.
+# Keep events + keys committed; ignore transient runtime files.
+*.tmp
+*.lock

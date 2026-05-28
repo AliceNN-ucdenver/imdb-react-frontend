@@ -1,0 +1,58 @@
+{
+  "barId": "APP-IMDB-001",
+  "barName": "IMDB Lite Application",
+  "tier": "autonomous",
+  "effectiveTier": "autonomous",
+  "permissions": {
+    "mode": "auto-edit",
+    "allow": [
+      "Edit",
+      "Write",
+      "Bash",
+      "Read",
+      "Glob",
+      "Grep"
+    ],
+    "deny": []
+  },
+  "review": {
+    "agents": 1,
+    "human_approval": false
+  },
+  "promptInjections": [],
+  "threatAccess": "open",
+  "reasoning": [
+    "Criticality: medium (threshold boost: 0)",
+    "Composite score: 89% → tier: autonomous (auto≥80, sup≥50)",
+    "Cross-BAR links: 3 connected node(s)"
+  ],
+  "platformOverrides": [],
+  "criticalityAdjustment": {
+    "applied": false,
+    "originalTier": "autonomous",
+    "boost": 0
+  },
+  "linkedBars": [
+    {
+      "barName": "IMDB Celebs",
+      "relationship": "bar-to-bar"
+    },
+    {
+      "barName": "IMDB Identity Service",
+      "relationship": "bar-to-infrastructure"
+    },
+    {
+      "barName": "Image CDN",
+      "relationship": "bar-to-infrastructure"
+    }
+  ],
+  "compositeScore": 89,
+  "criticality": "medium",
+  "platformId": "PLT-IMDB",
+  "pillarScores": {
+    "architecture": 92,
+    "security": 88,
+    "infoRisk": 85,
+    "operations": 90
+  }
+}
