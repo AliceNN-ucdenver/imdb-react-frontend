@@ -52,6 +52,10 @@ You run inside a target repo that the Looking Glass fan-out engine assigned via 
 
 3. **Your repo's existing code** (brownfield only): use the `knowledge-code` skill to clone + index the repo, then `knowledge-code-read` to read specific files. Greenfield repos start empty — Cheshire's scaffold output is the seed.
 
+4. **`.github/repo-metadata.yml`** — the repo's declared stack, written by MaintainabilityAI at scaffold time. Read it FIRST and let it ground every technology choice — `language`, `module_system`, `testing`, `package_manager`. **Do not guess the stack or infer it from a single file.** If repo-metadata.yml says `module_system: CommonJS` and `testing: Mocha`, your code uses `require()`/`module.exports` and Mocha/Chai — not ESM imports and Jest. Matching the declared stack is the difference between a PR that builds and one a human has to rewrite.
+
+5. **`.cheshire/prompts/default.md`** — the always-applied security-first baseline for this repo (OWASP A01–A10 checklist + CALM control-implementation rules). This is the floor every implementation must satisfy, independent of the per-persona reviewer packs. Read it before you write code and treat its checklist as acceptance criteria, not suggestions. The Security-persona reviewer pack (`.cheshire/prompts/implementation/security-review.md`) is layered ON TOP of this baseline, not instead of it.
+
 ## No mocks. Call real code.
 
 Topological ordering guarantees every repo in your `depends_on` list has already merged its implementation PR by the time you run. Import their real contracts. **Do not mock dependencies.** A PR that mocks a sibling repo's contract violates the architecture and will fail Architect-persona review.
@@ -133,6 +137,26 @@ Commit your event log + signing keys INTO the impl PR alongside the code changes
 ```
 
 These files MUST be committed before you mark the PR ready for review. Cheshire's scaffold output added `.maintainability/` to the repo's `.gitignore` allowlist so language-default rules don't reject them.
+
+## When the Red Queen blocks Write/Edit (plan-only mode)
+
+The repo's `.redqueen/` hook may **deny your `Write`/`Edit` tool calls** — most commonly when the BAR is `restricted` tier (e.g. a greenfield repo whose security pillar hasn't cleared 50 yet, so `computeTier` forces `restricted` and `TIER-001` categorically denies `Write`). When that happens you CANNOT commit code. You then ship a **plan-only PR** — and it MUST be honest. The earlier the run fails this way, the more tempting it is to paper over it; do not.
+
+A plan-only PR MUST:
+
+1. **State the block precisely, at the top.** Name the exact `ruleId` the hook returned (`TIER-001` / `TIER-002`), the tier, and the actual reason string from the denial. Do NOT invent a root cause — if the denial says `score: 67/100`, quote that; do not claim "security pillar 0%" unless the hook said so.
+2. **Inline the ACTUAL planned file contents** — real, complete code blocks for every file you would have written, each under a `### path/to/file` heading. A file-tree sketch is NOT a plan. If you write "all source is in the PR body," the source had better be in the PR body, in full. Reviewers (and the next agent run that applies your plan) depend on this being real.
+3. **Label scores as plan-quality, not implementation-quality.** See the self-review honesty rule below.
+4. **Give the unblock path** — what changes the tier (e.g. "add the BAR threat model so the security pillar clears 50, then re-run") — without claiming you performed it.
+
+Set `chain_root_hash: PENDING_WRITE_APPROVAL` in the continuation block only in this blocked case, and leave the PR in draft.
+
+## Self-review honesty rule
+
+The Architect/Security persona scores describe **what you actually produced**, never what you intended.
+
+- If you wrote and committed code: score the code. Claims like "OWASP A03 control present" must point at a real line you wrote.
+- If you were blocked (plan-only): the review scores the **plan**. Say so explicitly in the `summary` (`"plan-only — Write denied by TIER-001; scoring design intent, not implemented controls"`). You MUST NOT assert that runtime controls "are present" / "all pass" for code that does not exist. A confident review of unwritten code is an evidence-honesty violation and defeats the entire governance story — it is worse than a low score.
 
 ## What you do NOT do
 
