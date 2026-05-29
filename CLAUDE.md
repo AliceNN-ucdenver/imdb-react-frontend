@@ -4,12 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Tech Stack**: TypeScript, React 18, Vite, React Router v6
-**Database**: N/A (frontend only — communicates with Movie API at localhost:8080)
-**Testing**: Vitest + React Testing Library
-**Validation**: Zod (client-side form validation)
+**Tech Stack**: TypeScript, Node.js (CommonJS), 
+**Database**: 
+**Testing**: Vitest
+**Validation**: 
 **CI/CD**: GitHub Actions
-**Security**: DOMPurify (XSS), JWT in-memory only, CSRF via X-XSRF-TOKEN, Zod allowlist validation
 
 ## Security Framework
 
@@ -22,66 +21,18 @@ This project follows the MaintainabilityAI security-first SDLC framework:
 ## Development Commands
 
 ```bash
-# Install dependencies (use ci for reproducible builds)
-npm ci
+# Install dependencies
+npm install
 
-# Run tests with coverage
+# Run tests
 npm test
 
-# Watch mode
-npm run test:watch
-
-# Lint (must pass with zero warnings)
+# Lint
 npm run lint
-
-# Type check
-npm run type-check
 
 # Build
 npm run build
-
-# Development server (localhost:3000)
-npm run dev
 ```
-
-## Path Aliases
-
-All imports should use path aliases configured in `tsconfig.json` and `vite.config.ts`:
-- `@/components/*` → `src/components/*`
-- `@/services/*` → `src/services/*`
-- `@/pages/*` → `src/pages/*`
-- `@/types/*` → `src/types/*`
-- `@/utils/*` → `src/utils/*`
-- `@/context/*` → `src/context/*`
-- `@/config/*` → `src/config/*`
-
-## Security Conventions
-
-### JWT Handling (OWASP A07)
-- **NEVER** store JWT in `localStorage` or `sessionStorage`
-- JWT access token lives in React state (in-memory) only
-- Refresh token is an httpOnly cookie managed by the API server
-
-### XSS Prevention (THR-006, OWASP A03)
-- All API response text MUST be sanitized via `sanitizeText()` before rendering
-- User-generated HTML uses `sanitizeHtml()` — never raw `dangerouslySetInnerHTML`
-
-### CSRF Protection (OWASP A01)
-- `apiFetch()` automatically reads `XSRF-TOKEN` cookie → `X-XSRF-TOKEN` header on mutating requests
-
-### CDN URL Validation (OWASP A10)
-- All image src attributes must pass through `getCdnUrlOrPlaceholder()`
-- `javascript:` and `data:` URIs blocked in all href attributes
-
-### Audit Logging (THR-003)
-- Log actions via `auditLogger` — emails are SHA-256 hashed, passwords never logged
-
-## Branch Protection Rules
-
-The `main` branch requires:
-1. All CI jobs pass (lint, type-check, test ≥80% coverage, npm audit, build)
-2. At least 1 reviewer approval before merging
-3. No force pushes to `main`
 
 ## Security Workflow
 

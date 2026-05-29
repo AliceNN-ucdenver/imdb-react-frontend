@@ -2,4 +2,4 @@
 language: TypeScript
 module_system: CommonJS
 testing: Vitest
-package_manager: npm
+package_manager: yarn

@@ -61,9 +61,7 @@
     "js/overly-permissive-regular-expression": "A01_broken_access_control",
     "js/password-in-configuration-file": "A07_authn_failures",
     "js/exposure-of-private-information": "A02_crypto_failures",
-    "js/file-system-race": "A04_insecure_design",
-    "js/incomplete-multi-character-sanitization": "A03_injection",
-    "js/incomplete-sanitization": "A03_injection"
+    "js/file-system-race": "A04_insecure_design"
   },
   "owasp_categories": {
     "A01_broken_access_control": {

@@ -61,6 +61,11 @@
         "source": "movie-api",
         "target": "mongodb",
         "relationshipId": "api-to-mongo"
+      },
+      {
+        "source": "IMDB Lite Application",
+        "target": "https://github.com/AliceNN-ucdenver/celeb-api",
+        "relationshipId": "platform-calm:IMDB Celebs"
       }
     ],
     "customRules": []

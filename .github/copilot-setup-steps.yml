@@ -10,5 +10,5 @@ steps:
     with:
       node-version: 20
   - name: Install dependencies
-    run: if [ -f package.json ]; then npm ci || npm install; fi
+    run: if [ -f package.json ]; then yarn install --frozen-lockfile || yarn install; fi
 

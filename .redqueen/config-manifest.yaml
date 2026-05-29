@@ -2,7 +2,7 @@
 # Auto-generated — do not edit manually
 # Re-generate with: redqueen scaffold --bar "IMDB Lite Application"
 
-generated_at: "2026-05-28T22:27:33.868Z"
+generated_at: "2026-05-29T12:32:32.934Z"
 bar_id: APP-IMDB-001
 bar_name: "IMDB Lite Application"
 mesh_path: "./governance-mesh"
@@ -28,7 +28,7 @@ files:
   - path: ".redqueen/hooks/validate-tool.sh"
     sha256: cbf3735d8174f9fea0af1caa599eb5e9129b19dc380d169c8608566c66165643
   - path: ".redqueen/policy.json"
-    sha256: 0c4dd465368dea58fc740322dc96c599c557d7b0fb143f9617900e21976eb3cb
+    sha256: 8784535bab62013405db888b1ecafc544861c4efef7194ecf2db76b699f58eaf
   - path: ".github/hooks/redqueen.json"
     sha256: 5d911666304ab3362933254c57a4f0b7c2b18301f0dd52c28499ce0711d989dc
   - path: ".github/agents/implementation-agent.agent.md"

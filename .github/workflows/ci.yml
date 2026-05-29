@@ -22,12 +22,12 @@ jobs:
 
       - name: Install dependencies
         run: |
-          if [ -f package.json ]; then npm ci || npm install; fi
+          if [ -f package.json ]; then yarn install --frozen-lockfile || yarn install; fi
 
       - run: cp .env.example .env 2>/dev/null || true
       - name: Lint
         id: lint
-        run: if [ -f package.json ]; then npm run lint --if-present 2>&1 | tee lint-output.txt; fi
+        run: if [ -f package.json ]; then yarn run lint --if-present 2>&1 | tee lint-output.txt; fi
         shell: bash
         continue-on-error: true
       - name: Run tests
@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          if [ -f package.json ]; then npx vitest run --reporter=json --outputFile=test-results.json 2>&1 | tee test-output.txt; fi
+          if [ -f package.json ]; then yarn vitest run --reporter=json --outputFile=test-results.json 2>&1 | tee test-output.txt; fi
         continue-on-error: true
 
       - name: Create or update failure issue
