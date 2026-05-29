@@ -178,9 +178,13 @@ Commit your event log + signing keys INTO the impl PR alongside the code changes
     │   └── <implementation_run_id>.jsonl     # one JSONL per signed event
     └── keys/
         └── <implementation_run_id>.epoch-1.pub.pem  # Ed25519 public key
+.redqueen/
+└── audit-log.jsonl                            # Red Queen PreToolUse decisions
 ```
 
 These files MUST be committed before you mark the PR ready for review. Cheshire's scaffold output added `.maintainability/` to the repo's `.gitignore` allowlist so language-default rules don't reject them.
+
+**Also commit `.redqueen/audit-log.jsonl`.** The Red Queen PreToolUse hook appends one line per tool call (the allow/deny decision the Queen made on each `Read`/`Edit`/`Write`/`Bash`) to this file DURING your run. It is the Queen's decision trail — distinct from the signed skill chain above. It is written to your working tree but is NOT auto-staged, so you MUST `git add .redqueen/audit-log.jsonl` before opening the PR. The provenance gate surfaces an allowed/denied count from it. If the file does not exist (no governed tool calls were intercepted), that itself is a signal the hook did not run — note it in the PR body.
 
 ## When the Red Queen blocks Write/Edit (plan-only mode)
 
@@ -216,7 +220,7 @@ The Architect/Security persona scores describe **what you actually produced**, n
 2. Plan the implementation slice (write it down in PR-draft body as `<!-- plan: ... -->` so the audit chain has provenance for what you intended).
 3. Implement the slice. Run tests if the repo has them.
 4. Run the Tweedles persona-switch loop (Architect + Security, until convergence or `max_auto_rounds=3`).
-5. Stage `.maintainability/audit/events/<run-id>.jsonl` + `.maintainability/audit/keys/<run-id>.epoch-1.pub.pem` into the impl PR.
+5. Stage `.maintainability/audit/events/<run-id>.jsonl` + `.maintainability/audit/keys/<run-id>.epoch-1.pub.pem` + `.redqueen/audit-log.jsonl` (the Red Queen decision trail) into the impl PR.
 6. Write the PR body with the `implementation_chain` YAML frontmatter block above. Mark PR ready for review.
 7. The Red Queen Review workflow's `impl-provenance` job verifies your signed chain + skill manifest + Hatter Tag on PR open + each push, and fails the PR if any is missing.
 
