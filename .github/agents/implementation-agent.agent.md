@@ -60,9 +60,48 @@ You run inside a target repo that the Looking Glass fan-out engine assigned via 
 
 Topological ordering guarantees every repo in your `depends_on` list has already merged its implementation PR by the time you run. Import their real contracts. **Do not mock dependencies.** A PR that mocks a sibling repo's contract violates the architecture and will fail Architect-persona review.
 
+## Invocation contract — signed skills (this is HOW the audit chain happens)
+
+You run as a GitHub Copilot coding agent inside the target repo. **Governed skills are NOT Copilot's `skill_use` tool** — that only loads a SKILL.md into context and leaves the audit chain EMPTY. The ONLY way a skill call produces a signed `skill_call` event in your implementation chain is to shell the runner CLI, exactly as the planning agents (WHY/HOW/WHAT) do. This is the single most important section: skip it and the run produces ungoverned code that the provenance gate will reject.
+
+### 1. Export the session context BEFORE any skill call
+
+The runner reads four env vars and, on every skill call, auto-emits + Ed25519-signs a `skill_call` event into `.maintainability/audit/events/<RUN_ID>.jsonl`. Set them once in your shell before the first `npx` call:
+
+```sh
+export OKR_ID="<okr_id from the landing issue HTML comment>" \
+       RUN_ID="<your IMPL-... run id — the one you generate; see implementation_run_id format below>" \
+       INTENT_THREAD_UUID="<parent_intent_thread from the landing issue HTML comment>" \
+       PHASE="implementation"
+```
+
+`PHASE="implementation"` + an `IMPL-*` `RUN_ID` route the runner's audit writers to **THIS repo's** `.maintainability/audit/{events,keys}/` (not the mesh). If you skip this export, the runner still runs the skill but emits **nothing** — the chain stays empty and the provenance gate fails the PR. (You cannot sign events yourself; the runner owns the key. Your job is to invoke skills the signed way and emit honest scores.)
+
+### 2. Invoke every governed skill via the runner CLI
+
+Pipe JSON stdin to the pinned runner inside `execute`:
+
+```sh
+echo '{"<input>":...}' | npx -y @maintainabilityai/research-runner@~0.1.42 skill-<name>
+```
+
+This is the ONLY invocation that signs the chain. **Do NOT use Copilot's `skill_use` tool for governed skills** — it leaves the chain empty.
+
+### 3. The governed skills you MUST run this way
+
+- **Ground on your repo first** — `skill-knowledge-code` (clone + classify), then `skill-knowledge-code-read` for specific files. Brownfield: read the files you will change. Greenfield: read the scaffold seed.
+  ```sh
+  echo '{"okrId":"'"$OKR_ID"'","repoUrl":"<this repo url>","repoStatus":"<create|connected>"}' \
+    | npx -y @maintainabilityai/research-runner@~0.1.42 skill-knowledge-code
+  ```
+- **Persona self-review** (each round) — `skill-self-review-impl-architect` then `skill-self-review-impl-security` (see the Tweedles loop below for inputs).
+- **Emit each persona score** — `skill-audit-emit-event` (see the loop).
+
+**Reading the DESIGN DOC is an input, not a governed action.** The mesh artifact `okrs/<okr_id>/what/code-design.md` is linked from the landing issue; read it via the GitHub API. But you MUST implement the **exact contract it specifies in §1 for your repo** — endpoint paths, request/response field names, and shapes are **acceptance criteria, not suggestions**. The provenance gate diffs your exposed contract against the design; drift (renamed fields, changed paths, missing endpoints) fails the PR. If the design says `GET /api/celebrities/:id` returning `display_name`, you do not ship `GET /v1/celebs/:celebId` returning `displayName`.
+
 ## Required skill_call manifest
 
-Every run MUST produce successful `skill_call` events for these skills. The optional `impl-pr-provenance.yml` workflow (installed when the user opted in at scaffold time) verifies this manifest in PR audit and refuses to merge when missing.
+Every run MUST produce successful `skill_call` events for these skills, invoked via the runner CLI in §2 (NOT Copilot's `skill_use`). The **Red Queen Review** workflow's `impl-provenance` job (`.github/workflows/redqueen-review.yml`, installed by the Cheshire scaffold) verifies this manifest + the signed chain + the Hatter Tag on every impl PR, and **fails the PR** when any is missing.
 
 | Skill | Minimum successful calls | Notes |
 |---|---|---|
@@ -77,10 +116,15 @@ Same shape as Phase D's code-design-agent. After your first-pass implementation,
 
 For each round N (cap is tier-dependent — `self-review-impl-architect` returns the authoritative `maxAutoRounds` derived from the `tier` you passed; `autonomous=3`, `supervised=2`, `restricted=0`):
 
-1. **Switch to Architect persona.** Call `self-review-impl-architect` with `{ okrId, runId: <your IMPL-*>, round: N, tier: <from the landing issue's `<!-- governance_tier: ... -->` HTML comment, e.g. 'supervised'> }`. The skill returns `{ shouldProceed, maxAutoRounds, promptPack }` — `promptPack` is read from `.cheshire/prompts/implementation/architect-review.md` in your repo (the Cheshire scaffold installs a starter pack on first fan-out; overwrite it locally to tune review criteria). Re-read your changes through that pack. Score the implementation against the design's contracts + the repo's existing architecture conventions.
-2. Emit `audit-emit-event` with `event_kind: self_review`, `phase: 'implementation'`, `payload: { persona: 'impl-architect', round: N, score: <float 0.00-1.00>, severity: <PASS|MINOR|MAJOR|BLOCKING>, summary: <one paragraph> }`. (Codex-r5 Bug 2 — score scale + severity ladder match the planning phases (WHY/HOW/WHAT) so the rollup + UI metric extractors read all four phases uniformly. Same rubric: 1.00=PASS, 0.85-0.99=MINOR, 0.65-0.84=MAJOR, <0.65=BLOCKING.)
-3. **Switch to Security persona.** Call `self-review-impl-security` with the same input shape (including the `tier` value from the landing issue). The skill returns the security pack from `.cheshire/prompts/implementation/security-review.md`. Score against OWASP + the OKR's BAR threat model + cross-repo contract trust boundaries.
-4. Emit `audit-emit-event` with `event_kind: self_review`, `phase: 'implementation'`, `payload: { persona: 'impl-security', round: N, score: <float 0.00-1.00>, severity: <PASS|MINOR|MAJOR|BLOCKING>, summary }`.
+1. **Switch to Architect persona.** Invoke via the runner CLI (§2 — this is what signs the chain):
+   ```sh
+   echo '{"okrId":"'"$OKR_ID"'","runId":"'"$RUN_ID"'","round":'N',"tier":"<governance_tier from the landing issue HTML comment, e.g. supervised>"}' \
+     | npx -y @maintainabilityai/research-runner@~0.1.42 skill-self-review-impl-architect
+   ```
+   The skill returns `{ shouldProceed, maxAutoRounds, promptPack }` — `promptPack` is read from `.cheshire/prompts/implementation/architect-review.md` in your repo (the Cheshire scaffold installs a starter pack on first fan-out; overwrite it locally to tune review criteria). Re-read your changes through that pack. Score the implementation against the design's contracts + the repo's existing architecture conventions.
+2. Emit the score via the runner CLI: `echo '{"event_kind":"self_review","phase":"implementation","payload":{"persona":"impl-architect","round":N,"score":<float 0.00-1.00>,"severity":"<PASS|MINOR|MAJOR|BLOCKING>","summary":"<one paragraph>"}}' | npx -y @maintainabilityai/research-runner@~0.1.42 skill-audit-emit-event`. (Codex-r5 Bug 2 — score scale + severity ladder match the planning phases (WHY/HOW/WHAT) so the rollup + UI metric extractors read all four phases uniformly. Same rubric: 1.00=PASS, 0.85-0.99=MINOR, 0.65-0.84=MAJOR, <0.65=BLOCKING.)
+3. **Switch to Security persona.** Invoke `skill-self-review-impl-security` via the runner CLI with the same input shape (including the `tier` value from the landing issue). The skill returns the security pack from `.cheshire/prompts/implementation/security-review.md`. Score against OWASP + the OKR's BAR threat model + cross-repo contract trust boundaries.
+4. Emit the Security score the same way: `skill-audit-emit-event` with `payload: { persona: 'impl-security', round: N, score, severity, summary }`.
 5. **Decide.** If either persona scored `< 0.85` OR severity is `MAJOR`/`BLOCKING` → revise the implementation + start round N+1. (Mirrors the planning agents' convergence gate.)
 6. **On exhaustion** (round N === max_auto_rounds AND still not converged): emit ONE final `audit-emit-event` with `event_kind: self_review_exhausted`, `payload: { final_round: N }`. Leave the PR in draft + post a comment on the landing issue explaining the unresolved findings.
 
@@ -174,6 +218,6 @@ The Architect/Security persona scores describe **what you actually produced**, n
 4. Run the Tweedles persona-switch loop (Architect + Security, until convergence or `max_auto_rounds=3`).
 5. Stage `.maintainability/audit/events/<run-id>.jsonl` + `.maintainability/audit/keys/<run-id>.epoch-1.pub.pem` into the impl PR.
 6. Write the PR body with the `implementation_chain` YAML frontmatter block above. Mark PR ready for review.
-7. (Optional, when impl-pr-provenance.yml is installed) The workflow verifies your chain on PR open + each push.
+7. The Red Queen Review workflow's `impl-provenance` job verifies your signed chain + skill manifest + Hatter Tag on PR open + each push, and fails the PR if any is missing.
 
 If at any step you encounter an error you can't recover from (missing inputs, broken upstream contract, repo-state mismatch with the design), post a comment on the landing issue explaining the blocker, leave the PR in draft, and stop. Do NOT open a half-implemented PR to "show progress."
