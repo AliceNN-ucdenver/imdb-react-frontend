@@ -13,6 +13,9 @@ tools:
   - knowledge-code
   - knowledge-code-read
   - audit-emit-event
+  # Tier 2.5a — finalize-time Red Queen enforcement-chain signer. Advisory /
+  # soft until the published runner ships it (back-compat: absence is tolerated).
+  - audit-sign-redqueen-decisions
   # Codex-r4 Bug 2 — implementation-phase persona-switch self-critique.
   # These are NEW skills, distinct from the WHAT-phase code-design pair
   # (self-review-code-architect / self-review-code-security). The WHAT
@@ -109,6 +112,14 @@ Every run MUST produce successful `skill_call` events for these skills, invoked 
 | `self-review-impl-architect` | ≥1 per round | Tier echo + persona-switch entry into the Architect critique. Pass `tier` from the landing issue's `<!-- governance_tier: ... -->` HTML comment (REQUIRED — see Codex-r4 Bug 2 + Codex-r5 Bug 1). |
 | `self-review-impl-security` | ≥1 per round | Same shape, Security persona. |
 | `audit-emit-event` | ≥1 per round per persona | `self_review` event with `{ persona, round, score, severity, summary }`. Must pair `phase: 'implementation'` with your `IMPL-*` `runId` — the runner enforces this pairing (Codex-r4 Bug 3). |
+
+> **Note — `audit-sign-redqueen-decisions` is NOT in this `skill_call` manifest.** Unlike the skills above, the runner suppresses its `skill_call` auto-emission (it's in `NO_AUTO_EMIT_SKILLS`): instead of a `skill_call` event it emits a single **`redqueen_decisions`** digest event onto your IMPL chain. So it does not produce — and the gate does not look for — a `skill_call` for it. See the final-digest step below.
+
+### Final digest event (advisory, Tier 2.5a)
+
+| Skill | Emits | Notes |
+|---|---|---|
+| `audit-sign-redqueen-decisions` | one signed `redqueen_decisions` event (NOT a `skill_call`) | _advisory / soft_ — signs the digest of `.redqueen/audit-log.jsonl` onto the IMPL chain. **Not a hard gate**: older runners lack this skill (`unknown-skill`), so its absence does not fail the audit. Run it as your FINAL governed action — see the completion sequence. |
 
 ## Tweedles persona-switch self-critique loop
 
@@ -220,8 +231,17 @@ The Architect/Security persona scores describe **what you actually produced**, n
 2. Plan the implementation slice (write it down in PR-draft body as `<!-- plan: ... -->` so the audit chain has provenance for what you intended).
 3. Implement the slice. Run tests if the repo has them.
 4. Run the Tweedles persona-switch loop (Architect + Security, until convergence or `max_auto_rounds=3`).
-5. Stage `.maintainability/audit/events/<run-id>.jsonl` + `.maintainability/audit/keys/<run-id>.epoch-1.pub.pem` + `.redqueen/audit-log.jsonl` (the Red Queen decision trail) into the impl PR. Also stage `.redqueen/hook-signing-probe.jsonl` **if it exists** (a temporary Tier 2.5a signing-context diagnostic the hook writes once on its first invocation — `git add .redqueen/hook-signing-probe.jsonl 2>/dev/null || true`).
-6. Write the PR body with the `implementation_chain` YAML frontmatter block above. Mark PR ready for review.
-7. The Implementation Provenance workflow (`.github/workflows/impl-provenance.yml`) verifies your signed chain + skill manifest + Hatter Tag on PR open + each push, and fails the PR if any is missing.
+5. Stage `.maintainability/audit/events/<run-id>.jsonl` + `.maintainability/audit/keys/<run-id>.epoch-1.pub.pem` + `.redqueen/audit-log.jsonl` (the Red Queen decision trail) into the impl PR.
+6. **Sign the Red Queen enforcement chain** (Tier 2.5a) — your **LAST governed skill call**. The Red Queen PreToolUse hook wrote per-tool-call allow/deny decisions to `.redqueen/audit-log.jsonl` as **unsigned** plain JSON (it runs in a separate process with no signing key). Run this while the session env (`OKR_ID`/`RUN_ID`/`INTENT_THREAD_UUID`/`PHASE`) is still exported so the runner signs under the live per-epoch key; it rolls the log into one signed `redqueen_decisions` digest event on the IMPL chain, then re-stage the evidence:
+   ```bash
+   echo '{}' | npx -y @maintainabilityai/research-runner@~0.1.42 skill-audit-sign-redqueen-decisions
+   # Re-stage: the (now-attested) decision log + the events JSONL that now
+   # carries the signed redqueen_decisions digest event.
+   git add .redqueen/audit-log.jsonl
+   git add .maintainability/audit/events/ .maintainability/audit/keys/
+   ```
+   > **Tolerant fallback:** if your runner version predates this skill you will see `unknown-skill: audit-sign-redqueen-decisions`. If so, **skip this step** and note in the PR body that the Red Queen chain is unsigned (runner upgrade pending). It is **not yet a hard requirement** — the audit gate stays advisory.
+7. Write the PR body with the `implementation_chain` YAML frontmatter block above. Mark PR ready for review.
+8. The Implementation Provenance workflow (`.github/workflows/impl-provenance.yml`) verifies your signed chain + skill manifest + Hatter Tag on PR open + each push, and fails the PR if any is missing.
 
 If at any step you encounter an error you can't recover from (missing inputs, broken upstream contract, repo-state mismatch with the design), post a comment on the landing issue explaining the blocker, leave the PR in draft, and stop. Do NOT open a half-implemented PR to "show progress."

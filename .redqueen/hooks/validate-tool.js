@@ -52,9 +52,6 @@ function emitDecision(input, decision) {
   // even if the agent runtime kills us after stdout. Fail-soft: any error
   // here is swallowed so the hook still enforces.
   try { appendAuditLine(input, decision, agent); } catch (_) { /* fail-soft */ }
-  // DIAGNOSTIC (Tier 2.5a) — one-time signing-context probe. Remove after
-  // the 2.0 run confirms whether the Ed25519 key is reachable from the hook.
-  try { writeSigningProbeOnce(); } catch (_) { /* fail-soft */ }
 
   if (agent === 'copilot') {
     process.stdout.write(JSON.stringify({
@@ -76,54 +73,6 @@ function emitDecision(input, decision) {
     },
   }));
   process.exit(0);
-}
-
-function writeSigningProbeOnce() {
-  // DIAGNOSTIC (Tier 2.5a) — one-time capture of whether the per-epoch
-  // Ed25519 signing context is reachable from THIS hook process. The hook
-  // runs separately from the runner that owns the ephemeral private key,
-  // so this confirms (rather than assumes) what the hook can sign. SAFE:
-  // env NAMES + booleans + counts only -- never key material or env values.
-  // REMOVE in Tier 2.5a once the 2.0 run confirms the signing context.
-  try {
-    var probePath = path.join(process.cwd(), '.redqueen', 'hook-signing-probe.jsonl');
-    if (fs.existsSync(probePath)) { return; }
-    var keysDir = path.join(process.cwd(), '.maintainability', 'audit', 'keys');
-    var privCount = 0, pubCount = 0;
-    try {
-      var files = fs.existsSync(keysDir) ? fs.readdirSync(keysDir) : [];
-      for (var i = 0; i < files.length; i++) {
-        var lf = files[i].toLowerCase();
-        if (lf.indexOf('.pub') !== -1) { pubCount++; }
-        else if (lf.indexOf('priv') !== -1 || lf.indexOf('secret') !== -1 || lf.indexOf('.key') !== -1) { privCount++; }
-      }
-    } catch (_) { /* ignore */ }
-    var hints = ['OKR', 'RUN_ID', 'INTENT', 'PHASE', 'EPOCH', 'SIGNER', 'MAINTAINABILITY', 'REDQUEEN', 'SESSION', 'KEY', 'TOKEN', 'SIGN'];
-    var envNames = Object.keys(process.env).filter(function (k) {
-      var ku = k.toUpperCase();
-      for (var j = 0; j < hints.length; j++) { if (ku.indexOf(hints[j]) !== -1) { return true; } }
-      return false;
-    }).sort();
-    var probe = {
-      diagnostic: 'tier-2.5a-hook-signing-probe',
-      note: 'env NAMES + booleans + counts only; REMOVE after the 2.0 run confirms signing context',
-      timestamp: new Date().toISOString(),
-      pid: process.pid,
-      ppid: typeof process.ppid === 'number' ? process.ppid : null,
-      phase: process.env.PHASE || null,
-      runId: process.env.RUN_ID || null,
-      okrId: process.env.OKR_ID || null,
-      intentThread: process.env.INTENT_THREAD_UUID || null,
-      signerEpoch: process.env.SIGNER_EPOCH || null,
-      runnerSessionEnvVisible: !!(process.env.RUN_ID && process.env.PHASE),
-      privKeyOnDisk: privCount,
-      pubKeysOnDisk: pubCount,
-      envKeysPresent: envNames
-    };
-    var dir = path.dirname(probePath);
-    if (!fs.existsSync(dir)) { fs.mkdirSync(dir, { recursive: true }); }
-    fs.writeFileSync(probePath, JSON.stringify(probe) + '\n');
-  } catch (_) { /* fail-soft -- never affect enforcement */ }
 }
 
 function appendAuditLine(input, decision, agent) {

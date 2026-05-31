@@ -99,13 +99,22 @@ jobs:
       - name: Summarize Red Queen decision log
         id: redqueen
         if: always()
+        env:
+          EVENTS_FILE: ${{ steps.chain.outputs.events_file }}
         run: |
           python3 <<'PYEOF'
-          import json, os
+          import json, os, hashlib
+          EVENTS_FILE = os.environ.get('EVENTS_FILE', '')
           path = '.redqueen/audit-log.jsonl'
           present = os.path.exists(path)
           allowed = denied = 0
+          log_sha = None
           if present:
+              # Tier 2.5a — recompute the digest of the committed decision log
+              # over the RAW bytes (same as the runner signs) so we can compare
+              # it to the signed log_sha256 carried in the redqueen_decisions event.
+              with open(path, 'rb') as bf:
+                  log_sha = hashlib.sha256(bf.read()).hexdigest()
               with open(path, 'r', encoding='utf-8') as f:
                   for line in f:
                       line = line.strip()
@@ -117,12 +126,56 @@ jobs:
                       verdict = ((e.get('payload') or {}).get('verdict')) or e.get('verdict')
                       if verdict == 'allow': allowed += 1
                       elif verdict == 'deny': denied += 1
+          # Tier 2.5a — scan the IMPL events JSONL for the rolled-up
+          # redqueen_decisions digest event the runner emits as the agent's
+          # FINAL governed action. HONESTY (Codex finding 1): the mere
+          # PRESENCE of the event proves nothing cryptographically — a
+          # hand-written line would also set it. The only thing this step
+          # can prove on its own is rq_digest_match: the event's signed
+          # log_sha256 equals the digest of the committed log. The event's
+          # SIGNATURE itself is verified by the 'chain' step above
+          # (skill-audit-verify-chain), so rq_verified = chain_ok AND
+          # digest_match. Both ADVISORY (back-compat: absent on older
+          # runners that predate the audit-sign-redqueen-decisions skill).
+          digest_present = False
+          digest_match = False
+          event_sha = None
+          event_sha_seen = False
+          # Scan ONLY the chain-verified events file (env EVENTS_FILE) so the
+          # digest event we credit is in the SAME file the chain step verified.
+          if EVENTS_FILE and os.path.exists(EVENTS_FILE):
+              try:
+                  with open(EVENTS_FILE, 'r', encoding='utf-8') as ef:
+                      for line in ef:
+                          line = line.strip()
+                          if not line: continue
+                          try:
+                              ev = json.loads(line)
+                          except Exception:
+                              continue
+                          if ev.get('event_kind') != 'redqueen_decisions': continue
+                          digest_present = True
+                          event_sha = (ev.get('payload') or {}).get('log_sha256')
+                          event_sha_seen = True
+              except Exception:
+                  pass
+          # Codex r3 finding 2 — honest-zero: the runner emits a digest event
+          # with log_sha256=null when no decision log was committed. A null
+          # event_sha against a null log_sha is a MATCH (both say "no log"),
+          # not a mismatch. Otherwise an honest-zero run reads "digest ✗".
+          if digest_present and event_sha_seen:
+              if event_sha is None and log_sha is None:
+                  digest_match = True
+              elif event_sha is not None and log_sha is not None:
+                  digest_match = (event_sha == log_sha)
           out = os.environ['GITHUB_OUTPUT']
           with open(out, 'a', encoding='utf-8') as gh:
               gh.write('rq_present=' + ('true' if present else 'false') + '\n')
               gh.write('rq_allowed=' + str(allowed) + '\n')
               gh.write('rq_denied=' + str(denied) + '\n')
-          print('red queen decisions: allowed=%d denied=%d present=%s' % (allowed, denied, present))
+              gh.write('rq_digest_present=' + ('true' if digest_present else 'false') + '\n')
+              gh.write('rq_digest_match=' + ('true' if digest_match else 'false') + '\n')
+          print('red queen decisions: allowed=%d denied=%d present=%s digest_present=%s digest_match=%s' % (allowed, denied, present, digest_present, digest_match))
           PYEOF
 
       - name: Post provenance verdict + gate
@@ -146,7 +199,31 @@ jobs:
             const rqPresent = '${{ steps.redqueen.outputs.rq_present }}' === 'true';
             const rqAllowed = '${{ steps.redqueen.outputs.rq_allowed }}';
             const rqDenied = '${{ steps.redqueen.outputs.rq_denied }}';
-            const rqDetail = rqPresent ? (rqAllowed + ' allowed / ' + rqDenied + ' denied') : 'no .redqueen/audit-log.jsonl committed (advisory — not gated)';
+            const rqDigestPresent = '${{ steps.redqueen.outputs.rq_digest_present }}' === 'true';
+            const rqDigestMatch = '${{ steps.redqueen.outputs.rq_digest_match }}' === 'true';
+            // Tier 2.5a — advisory status, HONEST about strength (Codex finding 1):
+            // a digest event's signature is verified by the 'chain' step above, so
+            // "verified" = chainOk AND digest matches the committed log. A present
+            // event whose signature is NOT chain-verified (or whose digest doesn't
+            // match) is reported as "digest event present" only — never "signed".
+            // Codex r3 finding 2 — honest-zero: a digest event present with NO
+            // committed decision log (rqPresent=false) is a legitimate "nothing
+            // to sign" run, not a verified-governance claim. Report it plainly
+            // rather than "signed & verified".
+            // Codex r4 — but ONLY when the digest actually matches: a true
+            // honest-zero event carries log_sha256=null (rqDigestMatch=true via
+            // null-vs-null). If the event CLAIMS a non-null log_sha256 while the
+            // log is absent, rqDigestMatch is false — that's a MISMATCH, not
+            // honest-zero, so it must fall through to the mismatch branch.
+            const rqHonestZero = rqDigestPresent && !rqPresent && rqDigestMatch;
+            const rqVerified = rqDigestPresent && rqPresent && rqDigestMatch && chainOk;
+            const rqDetail = rqHonestZero
+              ? 'digest event present · no decision log (no governed tool calls captured)'
+              : rqVerified
+                ? ('signed & verified · digest ✓ · ' + rqAllowed + ' allowed / ' + rqDenied + ' denied')
+                : rqDigestPresent
+                  ? ('digest event present · ' + (rqDigestMatch ? 'digest ✓' : 'digest ✗ (mismatch)') + (chainOk ? '' : ' · chain unverified') + ' · ' + rqAllowed + ' allowed / ' + rqDenied + ' denied')
+                  : (rqPresent ? (rqAllowed + ' allowed / ' + rqDenied + ' denied · unsigned (runner upgrade pending)') : 'no .redqueen/audit-log.jsonl committed (advisory — not gated)');
             bodyMd += `| ${rqPresent ? 'ℹ️' : '➖'} | Red Queen decisions (advisory) | ${rqDetail} |\n`;
             bodyMd += '\n---\n🔴 Generated by [The Red Queen](https://maintainability.ai) — implementation provenance gate';
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body: bodyMd });
