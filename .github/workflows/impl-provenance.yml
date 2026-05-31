@@ -103,46 +103,29 @@ jobs:
           EVENTS_FILE: ${{ steps.chain.outputs.events_file }}
         run: |
           python3 <<'PYEOF'
+          # Tier 2.5a — SIGNED-PREFIX SEAL verification.
+          # The Red Queen log is a live append-only sidecar; the hook fires
+          # on the agent's OWN final git add/commit, so a whole-file digest
+          # taken at sign time can never match the committed file. The runner
+          # therefore seals a PREFIX: payload.covered_bytes + covered_sha256.
+          # This step re-hashes the first covered_bytes of the committed log
+          # and compares; anything after is the uncovered TAIL (the agent's
+          # post-seal commit-time decisions), reported separately — allow-only
+          # tail is benign (a note), deny/override/unknown in the tail blocks.
+          # ADVISORY today (does not flip the gate's pass).
           import json, os, hashlib
           EVENTS_FILE = os.environ.get('EVENTS_FILE', '')
           path = '.redqueen/audit-log.jsonl'
           present = os.path.exists(path)
-          allowed = denied = 0
-          log_sha = None
+          log_bytes = b''
           if present:
-              # Tier 2.5a — recompute the digest of the committed decision log
-              # over the RAW bytes (same as the runner signs) so we can compare
-              # it to the signed log_sha256 carried in the redqueen_decisions event.
               with open(path, 'rb') as bf:
-                  log_sha = hashlib.sha256(bf.read()).hexdigest()
-              with open(path, 'r', encoding='utf-8') as f:
-                  for line in f:
-                      line = line.strip()
-                      if not line: continue
-                      try:
-                          e = json.loads(line)
-                      except Exception:
-                          continue
-                      verdict = ((e.get('payload') or {}).get('verdict')) or e.get('verdict')
-                      if verdict == 'allow': allowed += 1
-                      elif verdict == 'deny': denied += 1
-          # Tier 2.5a — scan the IMPL events JSONL for the rolled-up
-          # redqueen_decisions digest event the runner emits as the agent's
-          # FINAL governed action. HONESTY (Codex finding 1): the mere
-          # PRESENCE of the event proves nothing cryptographically — a
-          # hand-written line would also set it. The only thing this step
-          # can prove on its own is rq_digest_match: the event's signed
-          # log_sha256 equals the digest of the committed log. The event's
-          # SIGNATURE itself is verified by the 'chain' step above
-          # (skill-audit-verify-chain), so rq_verified = chain_ok AND
-          # digest_match. Both ADVISORY (back-compat: absent on older
-          # runners that predate the audit-sign-redqueen-decisions skill).
+                  log_bytes = bf.read()
+          # Find the sealed redqueen_decisions event in the CHAIN-VERIFIED
+          # events file only (Codex r3 finding 1 — no glob).
           digest_present = False
-          digest_match = False
-          event_sha = None
-          event_sha_seen = False
-          # Scan ONLY the chain-verified events file (env EVENTS_FILE) so the
-          # digest event we credit is in the SAME file the chain step verified.
+          covered_bytes = None
+          covered_sha = None
           if EVENTS_FILE and os.path.exists(EVENTS_FILE):
               try:
                   with open(EVENTS_FILE, 'r', encoding='utf-8') as ef:
@@ -155,27 +138,81 @@ jobs:
                               continue
                           if ev.get('event_kind') != 'redqueen_decisions': continue
                           digest_present = True
-                          event_sha = (ev.get('payload') or {}).get('log_sha256')
-                          event_sha_seen = True
+                          p = ev.get('payload') or {}
+                          covered_bytes = p.get('covered_bytes')
+                          covered_sha = p.get('covered_sha256')
               except Exception:
                   pass
-          # Codex r3 finding 2 — honest-zero: the runner emits a digest event
-          # with log_sha256=null when no decision log was committed. A null
-          # event_sha against a null log_sha is a MATCH (both say "no log"),
-          # not a mismatch. Otherwise an honest-zero run reads "digest ✗".
-          if digest_present and event_sha_seen:
-              if event_sha is None and log_sha is None:
-                  digest_match = True
-              elif event_sha is not None and log_sha is not None:
-                  digest_match = (event_sha == log_sha)
+          # Verify the sealed prefix: re-hash the first covered_bytes bytes.
+          seal_match = False
+          tail_bytes = 0
+          tail_allowed = tail_other = 0
+          if digest_present:
+              # honest-zero seal: the runner read NO decision log at sign time
+              # and emits the EXACT shape covered_bytes=0 AND covered_sha256=null.
+              # A zero-byte prefix is vacuously sealed, so the WHOLE committed
+              # log is the uncovered tail. NOTE: test covered_bytes == 0, NOT
+              # 'is None' (the runner sends the int 0). And covered_sha MUST be
+              # null (exact) — covered_bytes=0 with a non-null sha (incl. an
+              # empty string) is MALFORMED and falls through to mismatch, never
+              # a benign honest-zero.
+              if isinstance(covered_bytes, int) and covered_bytes == 0 and covered_sha is None:
+                  seal_match = True
+                  tail_bytes = len(log_bytes)
+              elif isinstance(covered_bytes, int) and covered_bytes > 0 and covered_sha and covered_bytes <= len(log_bytes):
+                  prefix = log_bytes[:covered_bytes]
+                  seal_match = (hashlib.sha256(prefix).hexdigest() == covered_sha)
+                  tail_bytes = len(log_bytes) - covered_bytes
+              else:
+                  # covered_bytes missing / None / negative, claims MORE than the
+                  # committed log holds, or covered_sha absent — a real mismatch,
+                  # never a benign tail. No unconditional-true escape hatch here:
+                  # a malformed or forged seal MUST fail to match.
+                  seal_match = False
+          # Classify the uncovered tail: a plain allow is benign; any deny,
+          # OVERRIDE (verdict allow but a deny was bypassed), non-allow, or
+          # unparseable line is a flagged tail (advisory — surfaced, not gated
+          # unless the pass condition opts in below).
+          if seal_match and tail_bytes > 0 and covered_bytes is not None:
+              tail = log_bytes[covered_bytes:].decode('utf-8', 'replace')
+              for tline in tail.split('\n'):
+                  tline = tline.strip()
+                  if not tline: continue
+                  try:
+                      te = json.loads(tline)
+                  except Exception:
+                      tail_other += 1; continue
+                  tp = te.get('payload') or {}
+                  tv = tp.get('verdict') or te.get('verdict')
+                  to = (tp.get('override') is True) or (te.get('override') is True)
+                  if tv == 'allow' and not to: tail_allowed += 1
+                  else: tail_other += 1
+          # Count allow/deny across the COMMITTED log for the human summary.
+          allowed = denied = 0
+          if present:
+              for line in log_bytes.decode('utf-8', 'replace').split('\n'):
+                  line = line.strip()
+                  if not line: continue
+                  try:
+                      e = json.loads(line)
+                  except Exception:
+                      continue
+                  v = ((e.get('payload') or {}).get('verdict')) or e.get('verdict')
+                  if v == 'allow': allowed += 1
+                  elif v == 'deny': denied += 1
+          tail_clean = (tail_other == 0)
           out = os.environ['GITHUB_OUTPUT']
           with open(out, 'a', encoding='utf-8') as gh:
               gh.write('rq_present=' + ('true' if present else 'false') + '\n')
               gh.write('rq_allowed=' + str(allowed) + '\n')
               gh.write('rq_denied=' + str(denied) + '\n')
               gh.write('rq_digest_present=' + ('true' if digest_present else 'false') + '\n')
-              gh.write('rq_digest_match=' + ('true' if digest_match else 'false') + '\n')
-          print('red queen decisions: allowed=%d denied=%d present=%s digest_present=%s digest_match=%s' % (allowed, denied, present, digest_present, digest_match))
+              gh.write('rq_seal_match=' + ('true' if seal_match else 'false') + '\n')
+              gh.write('rq_tail_count=' + str(tail_allowed + tail_other) + '\n')
+              gh.write('rq_tail_allowed=' + str(tail_allowed) + '\n')
+              gh.write('rq_tail_other=' + str(tail_other) + '\n')
+              gh.write('rq_tail_clean=' + ('true' if tail_clean else 'false') + '\n')
+          print('red queen seal: present=%s match=%s allowed=%d denied=%d tail=%d (allow=%d other=%d)' % (digest_present, seal_match, allowed, denied, tail_allowed+tail_other, tail_allowed, tail_other))
           PYEOF
 
       - name: Post provenance verdict + gate
@@ -189,7 +226,17 @@ jobs:
             const chainReason = `${{ steps.chain.outputs.chain_reason }}`;
             const missing = `${{ steps.manifest.outputs.manifest_missing }}`;
             const hatterReason = `${{ steps.hatter.outputs.hatter_reason }}`;
-            const pass = chainOk && manifestOk && hatterOk;
+            // Red Queen signed-prefix seal signals — hoisted above the pass
+            // gate so the gate can fail on a seal mismatch.
+            const rqDigestPresent = '${{ steps.redqueen.outputs.rq_digest_present }}' === 'true';
+            const rqSealMatch = '${{ steps.redqueen.outputs.rq_seal_match }}' === 'true';
+            // GATE ON SEAL MISMATCH ONLY (user decision). A signed seal whose
+            // committed prefix fails to re-hash means tamper / corruption / wrong
+            // bytes — that FAILS the PR. A non-clean TAIL (the agent's own
+            // post-seal commit-time decisions) stays advisory: surfaced, not
+            // gated. No signed seal present → the seal clause is vacuously true
+            // (back-compat with runs that predate the signer).
+            const pass = chainOk && manifestOk && hatterOk && (!rqDigestPresent || rqSealMatch);
             const row = (label, ok, detail) => `| ${ok ? '✅' : '❌'} | ${label} | ${detail} |`;
             let bodyMd = `## ${pass ? '✅' : '❌'} Implementation provenance\n\n`;
             bodyMd += '| | Check | Detail |\n|---|---|---|\n';
@@ -199,32 +246,30 @@ jobs:
             const rqPresent = '${{ steps.redqueen.outputs.rq_present }}' === 'true';
             const rqAllowed = '${{ steps.redqueen.outputs.rq_allowed }}';
             const rqDenied = '${{ steps.redqueen.outputs.rq_denied }}';
-            const rqDigestPresent = '${{ steps.redqueen.outputs.rq_digest_present }}' === 'true';
-            const rqDigestMatch = '${{ steps.redqueen.outputs.rq_digest_match }}' === 'true';
-            // Tier 2.5a — advisory status, HONEST about strength (Codex finding 1):
-            // a digest event's signature is verified by the 'chain' step above, so
-            // "verified" = chainOk AND digest matches the committed log. A present
-            // event whose signature is NOT chain-verified (or whose digest doesn't
-            // match) is reported as "digest event present" only — never "signed".
-            // Codex r3 finding 2 — honest-zero: a digest event present with NO
-            // committed decision log (rqPresent=false) is a legitimate "nothing
-            // to sign" run, not a verified-governance claim. Report it plainly
-            // rather than "signed & verified".
-            // Codex r4 — but ONLY when the digest actually matches: a true
-            // honest-zero event carries log_sha256=null (rqDigestMatch=true via
-            // null-vs-null). If the event CLAIMS a non-null log_sha256 while the
-            // log is absent, rqDigestMatch is false — that's a MISMATCH, not
-            // honest-zero, so it must fall through to the mismatch branch.
-            const rqHonestZero = rqDigestPresent && !rqPresent && rqDigestMatch;
-            const rqVerified = rqDigestPresent && rqPresent && rqDigestMatch && chainOk;
-            const rqDetail = rqHonestZero
-              ? 'digest event present · no decision log (no governed tool calls captured)'
-              : rqVerified
-                ? ('signed & verified · digest ✓ · ' + rqAllowed + ' allowed / ' + rqDenied + ' denied')
-                : rqDigestPresent
-                  ? ('digest event present · ' + (rqDigestMatch ? 'digest ✓' : 'digest ✗ (mismatch)') + (chainOk ? '' : ' · chain unverified') + ' · ' + rqAllowed + ' allowed / ' + rqDenied + ' denied')
-                  : (rqPresent ? (rqAllowed + ' allowed / ' + rqDenied + ' denied · unsigned (runner upgrade pending)') : 'no .redqueen/audit-log.jsonl committed (advisory — not gated)');
-            bodyMd += `| ${rqPresent ? 'ℹ️' : '➖'} | Red Queen decisions (advisory) | ${rqDetail} |\n`;
+            const rqTailCount = parseInt('${{ steps.redqueen.outputs.rq_tail_count }}' || '0', 10);
+            const rqTailClean = '${{ steps.redqueen.outputs.rq_tail_clean }}' === 'true';
+            // Tier 2.5a SIGNED-PREFIX SEAL (Codex-approved contract). The seal
+            // covers the decision-log PREFIX the runner read; the gate re-hashes
+            // the first covered_bytes of the committed log. "signed & verified"
+            // requires the chain step to have verified the event's signature
+            // (chainOk) AND the sealed prefix to match (rqSealMatch). Anything
+            // after the seal is the agent's own post-seal commit-time decisions —
+            // an UNCOVERED TAIL, named honestly: allow-only is benign, deny/
+            // override/unknown in the tail is flagged. GATING: a seal MISMATCH
+            // fails the PR (folded into pass above); the tail stays advisory.
+            const rqVerified = rqDigestPresent && rqSealMatch && chainOk;
+            const tailNote = rqTailCount > 0
+              ? (' · ' + rqTailCount + ' post-seal commit decision' + (rqTailCount === 1 ? '' : 's') + (rqTailClean ? ' (allow-only, uncovered)' : ' ⚠ NON-ALLOW IN TAIL'))
+              : '';
+            const rqDetail = rqVerified
+              ? ((rqPresent
+                    ? ('signed & verified · ' + rqAllowed + ' decisions sealed' + (rqDenied !== '0' ? (' / ' + rqDenied + ' denied') : ''))
+                    : 'signed & verified · no decision log (no governed tool calls captured)') + tailNote)
+              : rqDigestPresent
+                ? ('seal present · ' + (rqSealMatch ? 'prefix ✓' : 'prefix ✗ MISMATCH (gates — fails the PR)') + (chainOk ? '' : ' · chain unverified') + ' · ' + rqAllowed + ' allowed / ' + rqDenied + ' denied' + tailNote)
+                : (rqPresent ? (rqAllowed + ' allowed / ' + rqDenied + ' denied · unsigned (runner upgrade pending)') : 'no .redqueen/audit-log.jsonl committed (advisory — not gated)');
+            const rqIcon = !rqDigestPresent ? (rqPresent ? 'ℹ️' : '➖') : (rqVerified ? (rqTailClean ? '✅' : '⚠️') : '❌');
+            bodyMd += `| ${rqIcon} | Red Queen enforcement seal (mismatch gates · tail advisory) | ${rqDetail} |\n`;
             bodyMd += '\n---\n🔴 Generated by [The Red Queen](https://maintainability.ai) — implementation provenance gate';
             await github.rest.issues.createComment({ owner: context.repo.owner, repo: context.repo.repo, issue_number: context.issue.number, body: bodyMd });
-            if (!pass) { core.setFailed('Implementation provenance failed — see the PR comment. The impl run was not governed (signed chain / skill manifest / Hatter Tag incomplete).'); }
+            if (!pass) { const why = (rqDigestPresent && !rqSealMatch) ? 'the Red Queen seal failed to verify — the committed decision-log prefix does not match the signed seal (tamper / corruption / wrong bytes)' : 'the impl run was not governed (signed chain / skill manifest / Hatter Tag incomplete)'; core.setFailed('Implementation provenance failed — see the PR comment. ' + why + '.'); }

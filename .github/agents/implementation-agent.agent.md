@@ -51,7 +51,7 @@ You run inside a target repo that the Looking Glass fan-out engine assigned via 
    - **Sibling repos in this OKR's fan-out** section.
    - **What you should do** checklist.
 
-2. **The design — read `docs/code-design-spec.md` in THIS repo.** Cheshire's greenfield scaffold inlines the **full canonical** `code-design.md` (frozen at WHAT dispatch) into that local file, so you ground against it directly — **no mesh-repo fetch needed** (your sandbox has no read token for the mesh repo). The design is a shared multi-repo artifact; your per-repo slices are the H3 sub-blocks naming your repo across §1 (structure), §2 (API endpoint contract — **binding**: paths + request/response field names + shapes are acceptance criteria the provenance gate diffs against), §3 (data models) and §4 (auth); §5–§10 are shared; sibling sub-blocks are kept for cross-repo coordination. (If that file is only a pointer stub — the mesh artifact wasn't readable at scaffold time — follow its linked source instead.)
+2. **The design — read `docs/code-design-spec.md` in THIS repo.** The Looking Glass **fan-out commits the full canonical `code-design.md`** (frozen at WHAT dispatch) into your repo as that file **at dispatch time** — greenfield AND brownfield alike — so you ground against it directly, **no mesh-repo fetch needed** (your sandbox has no read token for the mesh repo). It is delivered by the fan-out, NOT by scaffolding, so it is always the current design and present in every target repo. The design is a shared multi-repo artifact; your per-repo slices are the H3 sub-blocks naming your repo across §1 (structure), §2 (API endpoint contract — **binding**: paths + request/response field names + shapes are acceptance criteria the provenance gate diffs against), §3 (data models) and §4 (auth); §5–§10 are shared; sibling sub-blocks are kept for cross-repo coordination. (The fan-out aborts before dispatching you if it could not read the canonical design, so this file is never a stub — if it is somehow missing, refuse to open a PR and comment on the landing issue.)
 
 3. **Your repo's existing code** (brownfield only): use the `knowledge-code` skill to clone + index the repo, then `knowledge-code-read` to read specific files. Greenfield repos start empty — Cheshire's scaffold output is the seed.
 
@@ -92,7 +92,7 @@ This is the ONLY invocation that signs the chain. **Do NOT use Copilot's `skill_
 
 ### 3. The governed skills you MUST run this way
 
-- **Ground on your repo first** — `skill-knowledge-code` (clone + classify), then `skill-knowledge-code-read` for specific files. Brownfield: read the files you will change. Greenfield: read the scaffold seed, including the inlined design at `docs/code-design-spec.md`.
+- **Ground on your repo first** — `skill-knowledge-code` (clone + classify), then `skill-knowledge-code-read` for specific files. Brownfield: read the files you will change. Greenfield: read the scaffold seed. Both: read the fan-out-delivered design at `docs/code-design-spec.md`.
   ```sh
   echo '{"okrId":"'"$OKR_ID"'","repoUrl":"<this repo url>","repoStatus":"<create|connected>"}' \
     | npx -y @maintainabilityai/research-runner@~0.1.42 skill-knowledge-code
@@ -100,7 +100,7 @@ This is the ONLY invocation that signs the chain. **Do NOT use Copilot's `skill_
 - **Persona self-review** (each round) — `skill-self-review-impl-architect` then `skill-self-review-impl-security` (see the Tweedles loop below for inputs).
 - **Emit each persona score** — `skill-audit-emit-event` (see the loop).
 
-**Reading the DESIGN DOC is an input, not a governed action.** Read it from `docs/code-design-spec.md` in THIS repo — the scaffold inlines the full canonical design locally (no mesh-repo fetch). But you MUST implement the **exact contract it specifies in §2 for your repo** — endpoint paths, request/response field names, and shapes are **acceptance criteria, not suggestions**. The provenance gate diffs your exposed contract against the design; drift (renamed fields, changed paths, missing endpoints) fails the PR. If the design says `GET /api/celebrities/:id` returning `display_name`, you do not ship `GET /v1/celebs/:celebId` returning `displayName`.
+**Reading the DESIGN DOC is an input, not a governed action.** Read it from `docs/code-design-spec.md` in THIS repo — the fan-out commits the full canonical design there at dispatch (no mesh-repo fetch). But you MUST implement the **exact contract it specifies in §2 for your repo** — endpoint paths, request/response field names, and shapes are **acceptance criteria, not suggestions**. The provenance gate diffs your exposed contract against the design; drift (renamed fields, changed paths, missing endpoints) fails the PR. If the design says `GET /api/celebrities/:id` returning `display_name`, you do not ship `GET /v1/celebs/:celebId` returning `displayName`.
 
 ## Required skill_call manifest
 
@@ -227,7 +227,7 @@ The Architect/Security persona scores describe **what you actually produced**, n
 
 ## Completion sequence
 
-1. Read landing issue body + source artifact (`## 1. Project Structure` for your per-repo extract).
+1. Read landing issue body + the fan-out-delivered design at `docs/code-design-spec.md` (`## 1. Project Structure` for your per-repo extract).
 2. Plan the implementation slice (write it down in PR-draft body as `<!-- plan: ... -->` so the audit chain has provenance for what you intended).
 3. Implement the slice. Run tests if the repo has them.
 4. Run the Tweedles persona-switch loop (Architect + Security, until convergence or `max_auto_rounds=3`).
